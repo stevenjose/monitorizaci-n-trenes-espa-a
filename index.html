@@ -122,6 +122,23 @@
             box-shadow: 0 8px 16px rgba(0, 0, 0, 0.5) !important;
         }
 
+        .kilometer-marker {
+            background: transparent;
+            border: 0;
+        }
+        .kilometer-marker span {
+            display: block;
+            width: max-content;
+            padding: 2px 6px;
+            border: 1px solid rgba(148, 163, 184, 0.38);
+            border-radius: 9999px;
+            background: rgba(6, 9, 19, 0.88);
+            color: #cbd5e1;
+            font: 600 9px 'JetBrains Mono', monospace;
+            white-space: nowrap;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+        }
+
         .leaflet-tooltip.train-hover-tooltip {
             width: 250px;
             max-width: calc(100vw - 32px);
@@ -768,6 +785,7 @@ jobs:
         let map;
         let trainMarkers = {};
         let liveGtfsMarkersLayer = null;
+        let kilometerMarkersLayer = null;
         let selectedTrainId = 'AVE-03102';
         let followSelectedTrain = false;
         let currentOperatorFilter = 'ALL';
@@ -806,13 +824,20 @@ jobs:
                 maxZoom: 19,
                 attribution: '&copy; <a href="https://www.openrailwaymap.org/">OpenRailwayMap</a>, datos &copy; OpenStreetMap contributors'
             });
+            kilometerMarkersLayer = L.layerGroup().addTo(map);
             L.control.layers(null, {
-                'Infraestructura ferroviaria (OpenRailwayMap)': railwayInfrastructureLayer
+                'Infraestructura ferroviaria (OpenRailwayMap)': railwayInfrastructureLayer,
+                'Kilometraje aproximado del trazado': kilometerMarkersLayer
             }, { position: 'topright' }).addTo(map);
+            map.on('zoomend', refreshKilometerMarkers);
+            map.on('overlayadd', event => {
+                if (event.layer === kilometerMarkersLayer) refreshKilometerMarkers();
+            });
 
             liveGtfsMarkersLayer = L.layerGroup().addTo(map);
 
             renderCorridorsAndStations();
+            refreshKilometerMarkers();
             updateAllTrainsPositions(0);
             renderTelemetryInspector();
             renderSidebarTrains();
@@ -871,6 +896,62 @@ jobs:
                         renderStationBoard();
                     }
                 });
+            });
+        }
+
+        function getMapSegmentDistanceKm(from, to) {
+            const radians = value => value * Math.PI / 180;
+            const dLat = radians(to[0] - from[0]);
+            const dLng = radians(to[1] - from[1]);
+            const a = Math.sin(dLat / 2) ** 2 +
+                Math.cos(radians(from[0])) * Math.cos(radians(to[0])) * Math.sin(dLng / 2) ** 2;
+            return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        }
+
+        function refreshKilometerMarkers() {
+            if (!kilometerMarkersLayer || !map.hasLayer(kilometerMarkersLayer)) return;
+
+            kilometerMarkersLayer.clearLayers();
+            const zoom = map.getZoom();
+            const intervalKm = zoom >= 9 ? 25 : zoom >= 7 ? 50 : 100;
+
+            CORRIDORS.forEach(corridor => {
+                const points = corridor.stations.map(stationId => STATIONS[stationId]?.coords).filter(Boolean);
+                let distanceAtSegmentStart = 0;
+                let nextMarkerKm = intervalKm;
+
+                for (let i = 1; i < points.length; i++) {
+                    const from = points[i - 1];
+                    const to = points[i];
+                    const segmentKm = getMapSegmentDistanceKm(from, to);
+                    if (!segmentKm) continue;
+
+                    while (nextMarkerKm <= distanceAtSegmentStart + segmentKm) {
+                        const fraction = (nextMarkerKm - distanceAtSegmentStart) / segmentKm;
+                        if (fraction > 0.025 && fraction < 0.975) {
+                            const position = [
+                                from[0] + (to[0] - from[0]) * fraction,
+                                from[1] + (to[1] - from[1]) * fraction
+                            ];
+                            const marker = L.marker(position, {
+                                keyboard: false,
+                                icon: L.divIcon({
+                                    className: 'kilometer-marker',
+                                    html: `<span>~${Math.round(nextMarkerKm)} km</span>`,
+                                    iconSize: [1, 1],
+                                    iconAnchor: [0, 0]
+                                })
+                            });
+                            marker.bindTooltip(
+                                `<strong>${corridor.name}</strong><br>~${Math.round(nextMarkerKm)} km desde el inicio del corredor.<br><span class="text-slate-400">Estimación sobre el trazado dibujado; no es el PK oficial.</span>`,
+                                { direction: 'top', opacity: 1, sticky: true }
+                            );
+                            kilometerMarkersLayer.addLayer(marker);
+                        }
+                        nextMarkerKm += intervalKm;
+                    }
+                    distanceAtSegmentStart += segmentKm;
+                }
             });
         }
 
