@@ -122,6 +122,15 @@
             box-shadow: 0 8px 16px rgba(0, 0, 0, 0.5) !important;
         }
 
+        .leaflet-tooltip.train-hover-tooltip {
+            width: 250px;
+            max-width: calc(100vw - 32px);
+            white-space: normal;
+            padding: 0 !important;
+            border-color: rgba(71, 85, 105, 0.95) !important;
+            border-radius: 12px !important;
+        }
+
         /* Animación de marcadores de tren */
         .train-marker-container {
             transition: transform 0.35s linear;
@@ -796,7 +805,7 @@ jobs:
                 pane: 'railwayInfrastructurePane',
                 maxZoom: 19,
                 attribution: '&copy; <a href="https://www.openrailwaymap.org/">OpenRailwayMap</a>, datos &copy; OpenStreetMap contributors'
-            }).addTo(map);
+            });
             L.control.layers(null, {
                 'Infraestructura ferroviaria (OpenRailwayMap)': railwayInfrastructureLayer
             }, { position: 'topright' }).addTo(map);
@@ -873,6 +882,73 @@ jobs:
         /*************************************************************************
          * 6. INTERPOLACIÓN CINEMÁTICA DE TRENES A 300 KM/H
          *************************************************************************/
+        function getEstimatedJourneyDurationMinutes(train) {
+            const routeIds = train.trackPath || train.route;
+            let distanceKm = 0;
+
+            for (let i = 1; i < routeIds.length; i++) {
+                const from = STATIONS[routeIds[i - 1]]?.coords;
+                const to = STATIONS[routeIds[i]]?.coords;
+                if (!from || !to) continue;
+
+                const toRadians = value => value * Math.PI / 180;
+                const dLat = toRadians(to[0] - from[0]);
+                const dLng = toRadians(to[1] - from[1]);
+                const a = Math.sin(dLat / 2) ** 2 +
+                    Math.cos(toRadians(from[0])) * Math.cos(toRadians(to[0])) * Math.sin(dLng / 2) ** 2;
+                distanceKm += 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            }
+
+            return distanceKm / Math.max(Number(train.cruiseSpeed) || 1, 1) * 60;
+        }
+
+        function formatSpainTime(timestamp) {
+            return new Date(timestamp).toLocaleTimeString('es-ES', {
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false,
+                timeZone: 'Europe/Madrid'
+            });
+        }
+
+        function buildTrainHoverTooltip(train) {
+            const telemetry = train.telemetry;
+            if (!telemetry) return `<div class="p-3">Cargando datos del tren…</div>`;
+
+            const operator = OPERATORS[train.operator] || OPERATORS.AVE;
+            const durationMinutes = getEstimatedJourneyDurationMinutes(train);
+            const progress = Math.min(Math.max(Number(train.progress) || 0, 0), 1);
+            const now = Date.now();
+            const departureTime = now - durationMinutes * progress * 60000;
+            const arrivalTime = now + durationMinutes * (1 - progress) * 60000 + Math.max(Number(train.delayMin) || 0, 0) * 60000;
+            const delayMinutes = Math.max(Number(train.delayMin) || 0, 0);
+            const isStopped = Number(telemetry.currentSpeed) <= 5;
+            const status = isStopped
+                ? `<span class="rounded-full bg-rose-500/20 px-2 py-1 text-[10px] font-bold text-rose-300"><i class="fa-solid fa-triangle-exclamation mr-1"></i>ALERTA: DETENIDO</span>`
+                : `<span class="rounded-full bg-emerald-500/15 px-2 py-1 text-[10px] font-bold text-emerald-300">EN MARCHA</span>`;
+            const delay = delayMinutes > 0
+                ? `<span class="font-bold text-amber-300">+${delayMinutes} min</span>`
+                : `<span class="font-bold text-emerald-300">En hora</span>`;
+
+            return `
+                <div class="w-full p-3 text-left">
+                    <div class="mb-2 flex items-center justify-between gap-2 border-b border-slate-700 pb-2">
+                        <span class="font-mono text-xs font-bold text-white">${operator.short} ${train.number}</span>
+                        ${status}
+                    </div>
+                    <div class="mb-2 text-xs font-semibold text-slate-200">
+                        ${telemetry.originStation.short} <i class="fa-solid fa-arrow-right mx-1 text-slate-500"></i> ${telemetry.destStation.short}
+                    </div>
+                    <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
+                        <span class="text-slate-400">Salida estimada</span><span class="text-right font-mono text-slate-200">${formatSpainTime(departureTime)}</span>
+                        <span class="text-slate-400">Llegada estimada</span><span class="text-right font-mono text-slate-200">${formatSpainTime(arrivalTime)}</span>
+                        <span class="text-slate-400">Velocidad</span><span class="text-right font-mono text-cyan-300">${telemetry.currentSpeed} km/h</span>
+                        <span class="text-slate-400">Retraso</span><span class="text-right">${delay}</span>
+                    </div>
+                    <div class="mt-2 border-t border-slate-800 pt-1.5 text-[9px] text-slate-500">Horarios estimados con datos simulados</div>
+                </div>
+            `;
+        }
         function getInterpolatedTrainTelemetry(train) {
             const routeIds = train.route;
             const trackIds = train.trackPath || routeIds;
@@ -981,12 +1057,14 @@ jobs:
                 const visible = trainMatchesFilters(train);
                 const opConfig = OPERATORS[train.operator] || OPERATORS.AVE;
                 const isSelected = selectedTrainId === train.id;
+                const isStopped = telemetry.currentSpeed <= 5;
+                const markerColor = isStopped ? '#ef4444' : opConfig.hex;
 
                 const markerHtml = `
                     <div class="train-marker-container relative flex items-center justify-center" style="width:38px;height:38px;">
-                        ${isSelected ? `<div class="train-pulse absolute inset-0 rounded-full" style="background:${opConfig.hex}"></div>` : ''}
-                        <div class="relative z-10 flex items-center justify-center w-7 h-7 rounded-full border-2 ${isSelected ? 'border-white scale-125' : 'border-slate-950'} shadow-lg transition-transform"
-                             style="background:${opConfig.hex}; box-shadow: 0 0 12px ${opConfig.hex}99;">
+                        ${isSelected || isStopped ? `<div class="train-pulse absolute inset-0 rounded-full" style="background:${markerColor}"></div>` : ''}
+                        <div class="relative z-10 flex items-center justify-center w-7 h-7 rounded-full border-2 ${isStopped ? 'border-rose-100' : isSelected ? 'border-white scale-125' : 'border-slate-950'} shadow-lg transition-transform"
+                             style="background:${markerColor}; box-shadow: 0 0 12px ${markerColor}99;">
                             <i class="fa-solid fa-location-arrow text-[11px] text-slate-950" style="transform: rotate(${telemetry.bearing - 45}deg);"></i>
                         </div>
                         <div class="absolute -top-5 px-1.5 py-0.2 rounded bg-slate-950/95 border border-slate-700 text-[9px] font-mono font-bold text-white whitespace-nowrap shadow">
@@ -1004,10 +1082,12 @@ jobs:
                             iconAnchor: [19, 19]
                         })
                     });
+                    marker.bindTooltip(() => buildTrainHoverTooltip(train), { direction: 'top', sticky: true, opacity: 1, className: 'train-hover-tooltip', offset: [0, -8] });
                     marker.on('click', () => selectTrain(train.id, true));
                     trainMarkers[train.id] = marker;
                 } else {
                     trainMarkers[train.id].setLatLng([telemetry.lat, telemetry.lng]);
+                    if (trainMarkers[train.id].isTooltipOpen()) trainMarkers[train.id].setTooltipContent(buildTrainHoverTooltip(train));
                     trainMarkers[train.id].setIcon(L.divIcon({
                         className: 'custom-train-marker',
                         html: markerHtml,
