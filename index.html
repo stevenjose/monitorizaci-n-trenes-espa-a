@@ -1010,11 +1010,56 @@ jobs:
                     <div class="mb-2 text-xs text-slate-200">Punto aproximado del accidente del 28/10/2026, en la línea de alta velocidad Madrid–Sevilla.</div>
                     <div class="mb-2 text-xs font-semibold text-rose-300">Interrupción de circulación comunicada para el corredor Madrid–Andalucía (31/10/2026).</div>
                     <div class="mb-2 text-[10px] text-slate-400">El marcador es aproximado y el estado es informativo; esta app no consulta incidencias en tiempo real.</div>
-                    <a class="text-xs text-cyan-300 underline" href="https://www.adif.es/viajeros/estado-de-la-red" target="_blank" rel="noopener noreferrer">Consultar estado de la red en Adif</a>
+                    <div class="flex items-center gap-3">
+                        <button type="button" onclick="copyUrdaIncident(this)" class="rounded-lg border border-slate-600 bg-slate-800 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-slate-700">
+                            <i class="fa-regular fa-copy mr-1"></i>Copiar datos
+                        </button>
+                        <a class="text-xs text-cyan-300 underline" href="https://www.adif.es/viajeros/estado-de-la-red" target="_blank" rel="noopener noreferrer">Consultar Adif</a>
+                    </div>
                 </div>
             `, { maxWidth: 300 });
 
             marker.addTo(urdaIncidentLayer);
+        }
+
+        async function copyUrdaIncident(button) {
+            const details = [
+                'Incidencia de Urda · PK 118',
+                'Línea: Alta velocidad Madrid–Sevilla',
+                'Accidente: 28/10/2026',
+                'Coordenadas aproximadas: 39.4278, -3.8181',
+                'Interrupción comunicada para el corredor Madrid–Andalucía a 31/10/2026',
+                'Estado informativo; no se actualiza en tiempo real.',
+                'Adif: https://www.adif.es/viajeros/estado-de-la-red'
+            ].join('\n');
+            let copied = false;
+
+            try {
+                if (navigator.clipboard?.writeText) {
+                    await navigator.clipboard.writeText(details);
+                    copied = true;
+                }
+            } catch (error) {
+                // Usa el método compatible con navegadores que bloquean el portapapeles asíncrono.
+            }
+
+            if (!copied) {
+                const temp = document.createElement('textarea');
+                temp.value = details;
+                temp.style.position = 'fixed';
+                temp.style.opacity = '0';
+                document.body.appendChild(temp);
+                temp.select();
+                copied = document.execCommand('copy');
+                document.body.removeChild(temp);
+            }
+
+            button.innerHTML = copied
+                ? '<i class="fa-solid fa-check mr-1"></i>Copiado'
+                : '<i class="fa-solid fa-triangle-exclamation mr-1"></i>No se pudo copiar';
+            window.setTimeout(() => {
+                button.innerHTML = '<i class="fa-regular fa-copy mr-1"></i>Copiar datos';
+            }, 1800);
         }
 
         function resetMapView() {
