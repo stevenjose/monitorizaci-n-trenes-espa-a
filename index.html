@@ -1,0 +1,1377 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LAV Radar España | Monitor de Alta Velocidad en Tiempo Real</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Fonts: Inter & JetBrains Mono -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Leaflet CSS & JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        slate: {
+                            850: '#131c2e',
+                            900: '#0b1120',
+                            950: '#060913',
+                        },
+                        adif: {
+                            green: '#00e676',
+                            amber: '#ffab00',
+                            board: '#070d17'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body {
+            background-color: #060913;
+            color: #e2e8f0;
+            overflow-x: hidden;
+        }
+
+        /* Scrollbars personalizadas */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0b1120;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 9999px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #475569;
+        }
+
+        /* Contenedor de Mapa Leaflet */
+        #map {
+            background-color: #070b14;
+            z-index: 10;
+        }
+        .leaflet-popup-content-wrapper, .leaflet-popup-tip {
+            background: rgba(15, 23, 42, 0.96) !important;
+            color: #f8fafc !important;
+            border: 1px solid rgba(148, 163, 184, 0.25);
+            backdrop-filter: blur(8px);
+            border-radius: 12px !important;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.7) !important;
+        }
+        .leaflet-tooltip {
+            background: rgba(6, 9, 19, 0.92) !important;
+            color: #e2e8f0 !important;
+            border: 1px solid rgba(51, 65, 85, 0.8) !important;
+            border-radius: 8px !important;
+            font-family: 'Inter', sans-serif;
+            font-size: 11px;
+            padding: 4px 8px !important;
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.5) !important;
+        }
+
+        /* Animación de marcadores de tren */
+        .train-marker-container {
+            transition: transform 0.35s linear;
+        }
+        .train-pulse {
+            animation: pulse-ring 1.8s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+        }
+        @keyframes pulse-ring {
+            0% { transform: scale(0.85); opacity: 0.85; }
+            80%, 100% { transform: scale(2.4); opacity: 0; }
+        }
+
+        /* Efecto LED para Teleindicador Adif */
+        .adif-led-amber {
+            text-shadow: 0 0 8px rgba(251, 191, 36, 0.45);
+        }
+        .adif-led-green {
+            text-shadow: 0 0 8px rgba(52, 211, 153, 0.45);
+        }
+    </style>
+</head>
+<body class="h-screen flex flex-col select-none">
+
+    <!-- CABECERA DEL CENTRO DE CONTROL FERROVIARIO -->
+    <header class="bg-slate-900/95 border-b border-slate-800 px-3 sm:px-5 py-2.5 flex flex-wrap items-center justify-between gap-3 z-30 backdrop-blur-md">
+        <!-- Marca y Estado -->
+        <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500/20 to-cyan-500/20 border border-emerald-500/40 flex items-center justify-center shadow-lg shadow-emerald-950/50">
+                <i class="fa-solid fa-train-subway text-emerald-400 text-lg"></i>
+            </div>
+            <div>
+                <div class="flex items-center gap-2">
+                    <h1 class="font-bold text-base sm:text-lg tracking-tight text-white">
+                        LAV RADAR <span class="text-emerald-400 font-mono text-xs px-1.5 py-0.5 bg-emerald-500/10 border border-emerald-500/30 rounded">ESPAÑA</span>
+                    </h1>
+                    <span id="feed-badge" class="flex items-center gap-1.5 text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                        <span id="feed-badge-text">EN VIVO 300 KM/H</span>
+                    </span>
+                </div>
+                <p class="text-[11px] text-slate-400 hidden sm:block">Monitorización de Alta Velocidad (AVE · Avlo · Iryo · Ouigo · Euromed)</p>
+            </div>
+        </div>
+
+        <!-- KPIs de Telemetría de la Red -->
+        <div class="hidden xl:flex items-center gap-5 bg-slate-950/90 px-4 py-1.5 rounded-xl border border-slate-800/80">
+            <div class="flex items-center gap-2.5">
+                <i class="fa-solid fa-train text-cyan-400 text-sm"></i>
+                <div>
+                    <div class="text-[10px] uppercase tracking-wider text-slate-400">En Circulación</div>
+                    <div id="kpi-active-trains" class="font-mono font-bold text-sm text-white">20 trenes</div>
+                </div>
+            </div>
+            <div class="h-6 w-px bg-slate-800"></div>
+            <div class="flex items-center gap-2.5">
+                <i class="fa-solid fa-gauge-high text-purple-400 text-sm"></i>
+                <div>
+                    <div class="text-[10px] uppercase tracking-wider text-slate-400">Vel. Media LAV</div>
+                    <div id="kpi-avg-speed" class="font-mono font-bold text-sm text-white">276 km/h</div>
+                </div>
+            </div>
+            <div class="h-6 w-px bg-slate-800"></div>
+            <div class="flex items-center gap-2.5">
+                <i class="fa-solid fa-circle-check text-emerald-400 text-sm"></i>
+                <div>
+                    <div class="text-[10px] uppercase tracking-wider text-slate-400">Puntualidad</div>
+                    <div id="kpi-punctuality" class="font-mono font-bold text-sm text-emerald-400">90.0%</div>
+                </div>
+            </div>
+            <div class="h-6 w-px bg-slate-800"></div>
+            <div class="flex items-center gap-2.5">
+                <i class="fa-regular fa-clock text-amber-400 text-sm"></i>
+                <div>
+                    <div class="text-[10px] uppercase tracking-wider text-slate-400">Hora Oficial Adif</div>
+                    <div id="header-clock" class="font-mono font-bold text-sm text-amber-300">--:--:--</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Selector de Motor de Datos y Guía GitHub Pages -->
+        <div class="flex items-center gap-2">
+            <div class="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+                <button id="btn-mode-sim" onclick="setDataSourceMode('sim')" class="px-2.5 py-1.5 rounded-lg font-semibold transition-all bg-emerald-600 text-white shadow flex items-center gap-1.5">
+                    <i class="fa-solid fa-satellite-dish"></i>
+                    <span>Cinemático 300km/h</span>
+                </button>
+                <button id="btn-mode-gtfs" onclick="setDataSourceMode('gtfs')" class="px-2.5 py-1.5 rounded-lg font-semibold transition-all text-slate-400 hover:text-white flex items-center gap-1.5" title="Conectar con gtfsrt.renfe.com/vehicle_positions.json">
+                    <i class="fa-solid fa-cloud-arrow-down"></i>
+                    <span>Fetch GTFS-RT Renfe</span>
+                </button>
+            </div>
+
+            <button onclick="toggleModal('github-modal', true)" class="flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-200 border border-indigo-500/40 text-xs font-semibold transition-all shadow-sm">
+                <i class="fa-brands fa-github text-sm"></i>
+                <span class="hidden md:inline">Guía GitHub Pages / Código</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- BARRA DE FILTROS POR OPERADOR, CORREDOR Y BÚSQUEDA -->
+    <div class="bg-slate-900/75 border-b border-slate-800/80 px-3 sm:px-5 py-2 flex flex-wrap items-center justify-between gap-2 z-20">
+        <!-- Píldoras de Operadoras -->
+        <div class="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+            <span class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mr-1 hidden sm:inline">Operador:</span>
+            <button onclick="setOperatorFilter('ALL')" data-op="ALL" class="op-filter-btn ring-2 ring-white px-3 py-1 rounded-full text-xs font-semibold border transition-all bg-slate-100 text-slate-900 border-white">
+                Todos
+            </button>
+            <button onclick="setOperatorFilter('AVE')" data-op="AVE" class="op-filter-btn px-3 py-1 rounded-full text-xs font-semibold border transition-all bg-purple-950/70 text-purple-200 border-purple-500/50 hover:border-purple-400 flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-purple-400"></span> AVE
+            </button>
+            <button onclick="setOperatorFilter('IRYO')" data-op="IRYO" class="op-filter-btn px-3 py-1 rounded-full text-xs font-semibold border transition-all bg-rose-950/70 text-rose-200 border-rose-500/50 hover:border-rose-400 flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-rose-500"></span> iryo
+            </button>
+            <button onclick="setOperatorFilter('OUIGO')" data-op="OUIGO" class="op-filter-btn px-3 py-1 rounded-full text-xs font-semibold border transition-all bg-sky-950/70 text-sky-200 border-sky-500/50 hover:border-sky-400 flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-sky-400"></span> OUIGO
+            </button>
+            <button onclick="setOperatorFilter('AVLO')" data-op="AVLO" class="op-filter-btn px-3 py-1 rounded-full text-xs font-semibold border transition-all bg-teal-950/70 text-teal-200 border-teal-500/50 hover:border-teal-400 flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-teal-400"></span> Avlo
+            </button>
+            <button onclick="setOperatorFilter('ALVIA')" data-op="ALVIA" class="op-filter-btn px-3 py-1 rounded-full text-xs font-semibold border transition-all bg-amber-950/70 text-amber-200 border-amber-500/50 hover:border-amber-400 flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-amber-400"></span> Alvia / Euromed
+            </button>
+        </div>
+
+        <!-- Selector de Corredor LAV y Buscador -->
+        <div class="flex items-center gap-2 w-full sm:w-auto justify-end">
+            <select id="corridor-select" onchange="setCorridorFilter(this.value)" class="bg-slate-950 border border-slate-700 text-slate-200 text-xs rounded-xl px-3 py-1.5 focus:outline-none focus:border-emerald-500">
+                <option value="ALL">Todos los Corredores LAV (UIC 1435mm)</option>
+                <option value="NORESTE">Corredor Noreste (Madrid - Zaragoza - BCN - Figueres)</option>
+                <option value="SUR">Corredor Sur (Madrid - Córdoba - Sevilla / Málaga)</option>
+                <option value="LEVANTE">Corredor Levante / Mediterráneo (València / Alicante / BCN)</option>
+                <option value="NORTE">Corredor Norte / Noroeste (Valladolid - Ourense / León / Burgos)</option>
+            </select>
+
+            <div class="relative flex-1 sm:w-60">
+                <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
+                <input id="search-input" type="text" oninput="handleSearch(this.value)" placeholder="Buscar tren (03102) o estación..." class="w-full bg-slate-950 border border-slate-700 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500">
+            </div>
+        </div>
+    </div>
+
+    <!-- CUERPO PRINCIPAL: MAPA DE ESPAÑA + PANEL LATERAL -->
+    <main class="flex-1 flex flex-col lg:flex-row overflow-hidden relative">
+        
+        <!-- ZONA IZQUIERDA: MAPA INTERACTIVO -->
+        <div class="relative flex-1 h-[52vh] lg:h-full">
+            <div id="map" class="w-full h-full"></div>
+
+            <!-- Leyenda de Corredores LAV y Estado del Feed -->
+            <div class="absolute bottom-4 left-4 z-[400] bg-slate-900/92 backdrop-blur-md border border-slate-800 rounded-2xl p-3.5 shadow-2xl max-w-xs hidden sm:block">
+                <div class="text-[11px] font-bold uppercase tracking-wider text-slate-300 mb-2 flex items-center justify-between">
+                    <span>Corredores LAV (ERTMS N2)</span>
+                    <button onclick="resetMapView()" class="text-emerald-400 hover:underline text-[10px] font-semibold">Centrar España</button>
+                </div>
+                <div class="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+                    <div class="flex items-center gap-2">
+                        <span class="w-3.5 h-1 rounded-full bg-cyan-400 shadow-[0_0_8px_#22d3ee]"></span>
+                        <span class="text-slate-300">LAV Noreste</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="w-3.5 h-1 rounded-full bg-amber-400 shadow-[0_0_8px_#fbbf24]"></span>
+                        <span class="text-slate-300">LAV Sur</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="w-3.5 h-1 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]"></span>
+                        <span class="text-slate-300">LAV Levante</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="w-3.5 h-1 rounded-full bg-fuchsia-400 shadow-[0_0_8px_#e879f9]"></span>
+                        <span class="text-slate-300">LAV Norte-Galicia</span>
+                    </div>
+                </div>
+                <div id="gtfs-status-banner" class="mt-2.5 pt-2 border-t border-slate-800/90 text-[11px] text-slate-400 flex items-center justify-between gap-2">
+                    <span>Motor: <strong class="text-emerald-400">Cinemático Híbrido Activo</strong></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- PANEL LATERAL DERECHO: 2 PESTAÑAS (TRENES EN VÍA / TELEINDICADOR ADIF) -->
+        <aside class="w-full lg:w-[450px] xl:w-[490px] h-[48vh] lg:h-full bg-slate-900 border-t lg:border-t-0 lg:border-l border-slate-800 flex flex-col z-20">
+            
+            <!-- Selector de Pestañas -->
+            <div class="grid grid-cols-2 bg-slate-950 p-1.5 border-b border-slate-800">
+                <button id="tab-btn-trains" onclick="switchSidebarTab('trains')" class="py-2 px-3 rounded-xl text-xs font-bold tracking-wide transition-all bg-slate-800 text-white shadow flex items-center justify-center gap-2">
+                    <i class="fa-solid fa-train text-emerald-400"></i>
+                    <span>Trenes en Vía</span>
+                    <span id="badge-train-count" class="px-1.5 py-0.2 bg-emerald-500/20 text-emerald-300 rounded-full text-[11px] font-mono">20</span>
+                </button>
+                <button id="tab-btn-station" onclick="switchSidebarTab('station')" class="py-2 px-3 rounded-xl text-xs font-bold tracking-wide transition-all text-slate-400 hover:text-white flex items-center justify-center gap-2">
+                    <i class="fa-solid fa-table-list text-amber-400"></i>
+                    <span>Teleindicador Adif</span>
+                </button>
+            </div>
+
+            <!-- PESTAÑA 1: INSPECTOR DE TELEMETRÍA + LISTA DE TRENES EN VÍA -->
+            <div id="sidebar-view-trains" class="flex-1 flex flex-col overflow-hidden">
+                <!-- Inspector de Telemetría del Tren Seleccionado (se muestra al hacer clic en un tren) -->
+                <div id="telemetry-inspector-panel" class="hidden border-b border-slate-800 bg-slate-950/90 shrink-0">
+                    <!-- Rellenado dinámicamente -->
+                </div>
+
+                <!-- Lista de Circulaciones Activas -->
+                <div id="trains-list-container" class="flex-1 overflow-y-auto p-3 space-y-2.5">
+                    <!-- Rellenado dinámicamente -->
+                </div>
+            </div>
+
+            <!-- PESTAÑA 2: TELEINDICADOR DIGITAL DE ESTACIONES ADIF -->
+            <div id="sidebar-view-station" class="hidden flex-1 flex flex-col overflow-hidden bg-adif-board">
+                <!-- Selector de Estación y Salidas/Llegadas -->
+                <div class="p-3 bg-slate-950 border-b border-slate-800 flex flex-col gap-2">
+                    <div class="flex items-center justify-between">
+                        <label class="text-[11px] font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                            <i class="fa-solid fa-building-columns"></i> Estación Adif Alta Velocidad
+                        </label>
+                        <div class="flex bg-slate-900 rounded-lg p-0.5 border border-slate-800 text-[11px]">
+                            <button id="btn-board-departures" onclick="setBoardType('SALIDAS')" class="px-2.5 py-1 rounded-md bg-amber-500 text-slate-950 font-bold">SALIDAS</button>
+                            <button id="btn-board-arrivals" onclick="setBoardType('LLEGADAS')" class="px-2.5 py-1 rounded-md text-slate-400 hover:text-white font-medium">LLEGADAS</button>
+                        </div>
+                    </div>
+                    <select id="station-board-select" onchange="renderStationBoard()" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold text-white focus:outline-none focus:border-amber-400">
+                        <option value="BCN_SAN">Barcelona - Sants</option>
+                        <option value="MAD_ATO">Madrid - Puerta de Atocha - Almudena Grandes</option>
+                        <option value="MAD_CHA">Madrid - Chamartín - Clara Campoamor</option>
+                        <option value="ZGZ_DEL">Zaragoza - Delicias</option>
+                        <option value="SEV_SJU">Sevilla - Santa Justa</option>
+                        <option value="VAL_JSO">Valencia - Joaquín Sorolla</option>
+                        <option value="MAL_MZA">Málaga - María Zambrano</option>
+                        <option value="ALI_TER">Alicante - Terminal</option>
+                        <option value="VAL_CGR">Valladolid - Campo Grande</option>
+                    </select>
+                </div>
+
+                <!-- Cabecera de Columnas LED -->
+                <div class="grid grid-cols-12 px-3 py-2 bg-slate-950/90 border-b border-slate-800 text-[10px] font-mono uppercase tracking-wider text-slate-400">
+                    <div class="col-span-2">Hora</div>
+                    <div id="board-col-dest" class="col-span-4">Destino</div>
+                    <div class="col-span-3">Tren / Op.</div>
+                    <div class="col-span-1 text-center">Vía</div>
+                    <div class="col-span-2 text-right">Estado</div>
+                </div>
+
+                <!-- Filas LED -->
+                <div id="adif-board-rows" class="flex-1 overflow-y-auto divide-y divide-slate-800/60 font-mono text-xs">
+                    <!-- Generado dinámicamente -->
+                </div>
+
+                <!-- Cinta informativa Adif -->
+                <div class="p-2.5 bg-slate-950 border-t border-slate-800 text-[11px] font-mono text-amber-300/90 flex items-center gap-2 overflow-hidden">
+                    <span class="px-1.5 py-0.5 bg-amber-500/20 border border-amber-500/40 rounded text-[10px] font-bold shrink-0">ADIF INFO</span>
+                    <div class="truncate text-slate-300">Control de acceso de Alta Velocidad cierra 2 minutos antes de la salida del tren. Haz clic en cualquier tren para seguirlo en el mapa.</div>
+                </div>
+            </div>
+        </aside>
+    </main>
+
+    <!-- MODAL: GUÍA DE DESPLIEGUE EN GITHUB PAGES + CLOUDFLARE WORKER + GITHUB ACTIONS -->
+    <div id="github-modal" class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-4xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+            <!-- Cabecera Modal -->
+            <div class="px-6 py-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <i class="fa-brands fa-github text-2xl text-white"></i>
+                    <div>
+                        <h2 class="text-base font-bold text-white">Guía de Despliegue en GitHub Pages + Proxy GTFS-RT</h2>
+                        <p class="text-xs text-slate-400">Arquitectura estática gratuita para monitorizar Renfe, Iryo, Ouigo y Adif</p>
+                    </div>
+                </div>
+                <button onclick="toggleModal('github-modal', false)" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <!-- Contenido Modal -->
+            <div class="p-6 overflow-y-auto space-y-5 text-xs sm:text-sm text-slate-300 leading-relaxed">
+                <div class="p-4 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-emerald-200">
+                    <strong class="block text-emerald-400 mb-1"><i class="fa-solid fa-circle-check mr-1"></i> Paso 1: Subir este archivo a tu repositorio</strong>
+                    Guarda este código como <code class="text-white font-mono">index.html</code> en la raíz de tu repositorio de GitHub y activa <strong>Settings → Pages → Source: Deploy from a branch (main)</strong>. Tu web estará online en <code class="text-white font-mono">https://tu-usuario.github.io/tu-repo/</code>.
+                </div>
+
+                <!-- Bloque 1: Cloudflare Worker Proxy CORS -->
+                <div>
+                    <div class="flex items-center justify-between mb-1.5">
+                        <div>
+                            <span class="font-bold text-white text-sm">Paso 2: Proxy CORS gratuito en Cloudflare Workers (Tiempo Real Renfe GTFS-RT)</span>
+                            <p class="text-xs text-slate-400">Evita el bloqueo CORS del navegador al consultar <code class="text-cyan-300">https://gtfsrt.renfe.com/vehicle_positions.json</code> y cachea respuestas durante 15 segundos.</p>
+                        </div>
+                        <button onclick="copyCodeBlock('worker-code-block', 'btn-copy-worker')" id="btn-copy-worker" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700 text-xs font-mono shrink-0">
+                            <i class="fa-regular fa-copy mr-1"></i> Copiar Worker
+                        </button>
+                    </div>
+                    <pre id="worker-code-block" class="bg-slate-950 p-3.5 rounded-xl border border-slate-800 font-mono text-[11px] text-cyan-300 overflow-x-auto">export default {
+  async fetch(request) {
+    const url = new URL(request.url);
+    const feed = url.searchParams.get("feed") || "vehicle_positions.json";
+    const allowedFeeds = ["vehicle_positions.json", "trip_updates.json"];
+    const targetFeed = allowedFeeds.includes(feed) ? feed : "vehicle_positions.json";
+
+    const response = await fetch(`https://gtfsrt.renfe.com/${targetFeed}`, {
+      cf: { cacheTtl: 15, cacheEverything: true },
+      headers: { "User-Agent": "LAV-Radar-GitHubPages/1.0" }
+    });
+
+    const body = await response.text();
+    return new Response(body, {
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=15"
+      }
+    });
+  }
+};</pre>
+                </div>
+
+                <!-- Bloque 2: GitHub Actions Workflow -->
+                <div>
+                    <div class="flex items-center justify-between mb-1.5">
+                        <div>
+                            <span class="font-bold text-white text-sm">Paso 3: Workflow de Despliegue Automático (`.github/workflows/deploy.yml`)</span>
+                            <p class="text-xs text-slate-400">Despliega automáticamente cada vez que hagas <code class="text-amber-300">git push</code> a la rama <code class="text-amber-300">main</code>.</p>
+                        </div>
+                        <button onclick="copyCodeBlock('actions-code-block', 'btn-copy-actions')" id="btn-copy-actions" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700 text-xs font-mono shrink-0">
+                            <i class="fa-regular fa-copy mr-1"></i> Copiar Workflow
+                        </button>
+                    </div>
+                    <pre id="actions-code-block" class="bg-slate-950 p-3.5 rounded-xl border border-slate-800 font-mono text-[11px] text-amber-300 overflow-x-auto">name: Desplegar Monitor LAV en GitHub Pages
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v4
+      - name: Configurar GitHub Pages
+        uses: actions/configure-pages@v5
+      - name: Subir artefacto estático
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+      - name: Publicar en GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4</pre>
+                </div>
+            </div>
+
+            <!-- Pie Modal -->
+            <div class="px-6 py-3 bg-slate-950 border-t border-slate-800 flex justify-end">
+                <button onclick="toggleModal('github-modal', false)" class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all">
+                    Cerrar y volver al Mapa
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- SCRIPT PRINCIPAL DE TELEMETRÍA, MAPA Y MOTOR GTFS-RT -->
+    <script>
+        /*************************************************************************
+         * 1. ESTACIONES ADIF DE ALTA VELOCIDAD (COORDENADAS PRECISAS)
+         *************************************************************************/
+        const STATIONS = {
+            // Corredor Noreste
+            MAD_ATO: { id: 'MAD_ATO', name: 'Madrid-Puerta de Atocha', short: 'Madrid-Atocha', coords: [40.4065, -3.6896], major: true },
+            MAD_CHA: { id: 'MAD_CHA', name: 'Madrid-Chamartín-Clara Campoamor', short: 'Madrid-Chamartín', coords: [40.4720, -3.6824], major: true },
+            GUA_YEB: { id: 'GUA_YEB', name: 'Guadalajara-Yebes', short: 'Guadalajara-Yebes', coords: [40.5661, -3.1250], major: false },
+            CAL_AVE: { id: 'CAL_AVE', name: 'Calatayud', short: 'Calatayud', coords: [41.3468, -1.6385], major: false },
+            ZGZ_DEL: { id: 'ZGZ_DEL', name: 'Zaragoza-Delicias', short: 'Zaragoza-Delicias', coords: [41.6587, -0.9116], major: true },
+            LLE_PIR: { id: 'LLE_PIR', name: 'Lleida-Pirineus', short: 'Lleida-Pirineus', coords: [41.6206, 0.6327], major: false },
+            TAR_CAM: { id: 'TAR_CAM', name: 'Camp de Tarragona', short: 'Camp Tarragona', coords: [41.1951, 1.2725], major: false },
+            BCN_SAN: { id: 'BCN_SAN', name: 'Barcelona-Sants', short: 'Barcelona-Sants', coords: [41.3791, 2.1401], major: true },
+            GIR_AVE: { id: 'GIR_AVE', name: 'Girona', short: 'Girona', coords: [41.9793, 2.8170], major: false },
+            FIG_VIL: { id: 'FIG_VIL', name: 'Figueres-Vilafant', short: 'Figueres-Vilafant', coords: [42.2647, 2.9435], major: true },
+
+            // Corredor Sur
+            CIU_REA: { id: 'CIU_REA', name: 'Ciudad Real', short: 'Ciudad Real', coords: [38.9796, -3.9145], major: false },
+            PUE_AVE: { id: 'PUE_AVE', name: 'Puertollano', short: 'Puertollano', coords: [38.6902, -4.1086], major: false },
+            COR_CEN: { id: 'COR_CEN', name: 'Córdoba', short: 'Córdoba', coords: [37.8884, -4.7892], major: true },
+            SEV_SJU: { id: 'SEV_SJU', name: 'Sevilla-Santa Justa', short: 'Sevilla-Sta. Justa', coords: [37.3919, -5.9754], major: true },
+            PGE_HER: { id: 'PGE_HER', name: 'Puente Genil-Herrera', short: 'Puente Genil', coords: [37.3611, -4.7975], major: false },
+            ANT_STA: { id: 'ANT_STA', name: 'Antequera-Santa Ana', short: 'Antequera-Sta. Ana', coords: [37.0672, -4.6869], major: false },
+            MAL_MZA: { id: 'MAL_MZA', name: 'Málaga-María Zambrano', short: 'Málaga-M. Zambrano', coords: [36.7116, -4.4316], major: true },
+
+            // Corredor Levante y Mediterráneo
+            CUE_FZO: { id: 'CUE_FZO', name: 'Cuenca-Fernando Zóbel', short: 'Cuenca-F. Zóbel', coords: [40.0319, -2.1419], major: false },
+            REQ_UTI: { id: 'REQ_UTI', name: 'Requena-Utiel', short: 'Requena-Utiel', coords: [39.5150, -1.1481], major: false },
+            VAL_JSO: { id: 'VAL_JSO', name: 'Valencia-Joaquín Sorolla', short: 'Valencia-J. Sorolla', coords: [39.4601, -0.3818], major: true },
+            CAS_PLA: { id: 'CAS_PLA', name: 'Castellón / Castelló', short: 'Castelló', coords: [39.9886, -0.0513], major: false },
+            ALB_LOS: { id: 'ALB_LOS', name: 'Albacete-Los Llanos', short: 'Albacete', coords: [38.9999, -1.8485], major: false },
+            VIL_AVE: { id: 'VIL_AVE', name: 'Villena AV', short: 'Villena AV', coords: [38.6061, -0.8856], major: false },
+            ALI_TER: { id: 'ALI_TER', name: 'Alicante-Terminal', short: 'Alicante', coords: [38.3446, -0.4950], major: true },
+
+            // Corredor Norte / Noroeste
+            SEG_GUI: { id: 'SEG_GUI', name: 'Segovia-Guiomar', short: 'Segovia-Guiomar', coords: [40.9102, -4.0942], major: false },
+            VAL_CGR: { id: 'VAL_CGR', name: 'Valladolid-Campo Grande', short: 'Valladolid', coords: [41.6416, -4.7278], major: true },
+            PAL_AVE: { id: 'PAL_AVE', name: 'Palencia', short: 'Palencia', coords: [42.0128, -4.5380], major: false },
+            LEO_AVE: { id: 'LEO_AVE', name: 'León', short: 'León', coords: [42.5955, -5.5818], major: true },
+            BUR_ROS: { id: 'BUR_ROS', name: 'Burgos-Rosa Manzano', short: 'Burgos-R. Manzano', coords: [42.3712, -3.6661], major: true },
+            ZAM_AVE: { id: 'ZAM_AVE', name: 'Zamora', short: 'Zamora', coords: [41.5112, -5.7351], major: false },
+            OUR_AVE: { id: 'OUR_AVE', name: 'Ourense', short: 'Ourense', coords: [42.3496, -7.8740], major: true }
+        };
+
+        /*************************************************************************
+         * 2. TRAZADOS DE CORREDORES DE ALTA VELOCIDAD (UIC 1435mm)
+         *************************************************************************/
+        const CORRIDORS = [
+            {
+                id: 'NORESTE',
+                name: 'LAV Madrid - Zaragoza - Barcelona - Figueres',
+                color: '#22d3ee',
+                stations: ['MAD_ATO', 'GUA_YEB', 'CAL_AVE', 'ZGZ_DEL', 'LLE_PIR', 'TAR_CAM', 'BCN_SAN', 'GIR_AVE', 'FIG_VIL']
+            },
+            {
+                id: 'SUR_SEV',
+                name: 'LAV Madrid - Ciudad Real - Córdoba - Sevilla',
+                color: '#fbbf24',
+                stations: ['MAD_ATO', 'CIU_REA', 'PUE_AVE', 'COR_CEN', 'SEV_SJU']
+            },
+            {
+                id: 'SUR_MAL',
+                name: 'LAV Córdoba - Antequera - Málaga',
+                color: '#fbbf24',
+                stations: ['COR_CEN', 'PGE_HER', 'ANT_STA', 'MAL_MZA']
+            },
+            {
+                id: 'LEVANTE_VAL',
+                name: 'LAV Madrid - Cuenca - Valencia',
+                color: '#34d399',
+                stations: ['MAD_CHA', 'MAD_ATO', 'CUE_FZO', 'REQ_UTI', 'VAL_JSO']
+            },
+            {
+                id: 'LEVANTE_ALI',
+                name: 'LAV Cuenca - Albacete - Villena - Alicante',
+                color: '#34d399',
+                stations: ['CUE_FZO', 'ALB_LOS', 'VIL_AVE', 'ALI_TER']
+            },
+            {
+                id: 'MEDITERRANEO',
+                name: 'Corredor Mediterráneo (Barcelona - Tarragona - Castelló - Valencia)',
+                color: '#38bdf8',
+                stations: ['BCN_SAN', 'TAR_CAM', 'CAS_PLA', 'VAL_JSO']
+            },
+            {
+                id: 'NOROESTE_GAL',
+                name: 'LAV Madrid - Segovia - Valladolid - Zamora - Ourense',
+                color: '#e879f9',
+                stations: ['MAD_CHA', 'SEG_GUI', 'VAL_CGR', 'ZAM_AVE', 'OUR_AVE']
+            },
+            {
+                id: 'NORTE_LEO',
+                name: 'LAV Valladolid - Palencia - León',
+                color: '#e879f9',
+                stations: ['VAL_CGR', 'PAL_AVE', 'LEO_AVE']
+            },
+            {
+                id: 'NORTE_BUR',
+                name: 'LAV Valladolid - Burgos Rosa Manzano',
+                color: '#e879f9',
+                stations: ['VAL_CGR', 'PAL_AVE', 'BUR_ROS']
+            }
+        ];
+
+        /*************************************************************************
+         * 3. OPERADORES Y MATERIAL RODANTE
+         *************************************************************************/
+        const OPERATORS = {
+            AVE: {
+                label: 'Renfe AVE',
+                short: 'AVE',
+                badgeClass: 'bg-purple-600/25 text-purple-200 border-purple-500/50',
+                hex: '#a855f7'
+            },
+            IRYO: {
+                label: 'iryo (ILSA)',
+                short: 'IRYO',
+                badgeClass: 'bg-rose-600/25 text-rose-200 border-rose-500/50',
+                hex: '#f43f5e'
+            },
+            OUIGO: {
+                label: 'OUIGO España',
+                short: 'OUIGO',
+                badgeClass: 'bg-sky-500/25 text-sky-200 border-sky-400/50',
+                hex: '#38bdf8'
+            },
+            AVLO: {
+                label: 'Renfe Avlo',
+                short: 'AVLO',
+                badgeClass: 'bg-teal-500/25 text-teal-200 border-teal-400/50',
+                hex: '#2dd4bf'
+            },
+            ALVIA: {
+                label: 'Alvia / Euromed',
+                short: 'EUROMED',
+                badgeClass: 'bg-amber-500/25 text-amber-200 border-amber-400/50',
+                hex: '#f59e0b'
+            }
+        };
+
+        /*************************************************************************
+         * 4. CATÁLOGO DE CIRCULACIONES ACTIVAS EN LA RED ESPAÑOLA
+         *************************************************************************/
+        const TRAINS_DATA = [
+            // Corredor Noreste
+            {
+                id: 'AVE-03102', number: '03102', operator: 'AVE', corridor: 'NORESTE',
+                route: ['MAD_ATO', 'ZGZ_DEL', 'LLE_PIR', 'TAR_CAM', 'BCN_SAN'],
+                progress: 0.34, cruiseSpeed: 301, delayMin: 0, platform: '4',
+                rollingStock: 'Siemens Velaro E (Serie 103)'
+            },
+            {
+                id: 'IRYO-06140', number: '06140', operator: 'IRYO', corridor: 'NORESTE',
+                route: ['BCN_SAN', 'TAR_CAM', 'ZGZ_DEL', 'MAD_ATO'],
+                progress: 0.61, cruiseSpeed: 298, delayMin: 0, platform: '7',
+                rollingStock: 'Hitachi-Alstom Frecciarossa 1000 (S-109)'
+            },
+            {
+                id: 'OUIGO-06501', number: '06501', operator: 'OUIGO', corridor: 'NORESTE',
+                route: ['MAD_ATO', 'ZGZ_DEL', 'TAR_CAM', 'BCN_SAN'],
+                progress: 0.77, cruiseSpeed: 296, delayMin: 4, platform: '9',
+                rollingStock: 'Alstom TGV Euroduplex 2N2'
+            },
+            {
+                id: 'AVLO-06304', number: '06304', operator: 'AVLO', corridor: 'NORESTE',
+                route: ['FIG_VIL', 'GIR_AVE', 'BCN_SAN', 'LLE_PIR', 'ZGZ_DEL', 'CAL_AVE', 'GUA_YEB', 'MAD_ATO'],
+                progress: 0.28, cruiseSpeed: 294, delayMin: 11, platform: '3',
+                rollingStock: 'Talgo Avril (Serie 106)'
+            },
+            {
+                id: 'AVE-03192', number: '03192', operator: 'AVE', corridor: 'NORESTE',
+                route: ['BCN_SAN', 'MAD_ATO'],
+                progress: 0.19, cruiseSpeed: 306, delayMin: 0, platform: '2',
+                rollingStock: 'Siemens Velaro E Directo (S-103)'
+            },
+
+            // Corredor Sur
+            {
+                id: 'AVE-02110', number: '02110', operator: 'AVE', corridor: 'SUR',
+                route: ['MAD_ATO', 'CIU_REA', 'PUE_AVE', 'COR_CEN', 'SEV_SJU'],
+                progress: 0.52, cruiseSpeed: 290, delayMin: 0, platform: '11',
+                rollingStock: 'Talgo 350 Pato (Serie 102)'
+            },
+            {
+                id: 'IRYO-06082', number: '06082', operator: 'IRYO', corridor: 'SUR',
+                route: ['SEV_SJU', 'COR_CEN', 'MAD_ATO'],
+                progress: 0.44, cruiseSpeed: 295, delayMin: 2, platform: '6',
+                rollingStock: 'Frecciarossa 1000 (Serie 109)'
+            },
+            {
+                id: 'AVE-02094', number: '02094', operator: 'AVE', corridor: 'SUR',
+                route: ['MAD_ATO', 'COR_CEN', 'PGE_HER', 'ANT_STA', 'MAL_MZA'],
+                progress: 0.72, cruiseSpeed: 288, delayMin: 0, platform: '8',
+                rollingStock: 'Talgo 350 (Serie 112)'
+            },
+            {
+                id: 'OUIGO-09531', number: '09531', operator: 'OUIGO', corridor: 'SUR',
+                route: ['MAL_MZA', 'ANT_STA', 'COR_CEN', 'MAD_ATO'],
+                progress: 0.36, cruiseSpeed: 292, delayMin: 0, platform: '5',
+                rollingStock: 'Alstom Euroduplex 2N2 LZB'
+            },
+            {
+                id: 'AVLO-02175', number: '02175', operator: 'AVLO', corridor: 'SUR',
+                route: ['SEV_SJU', 'COR_CEN', 'PUE_AVE', 'CIU_REA', 'MAD_ATO'],
+                progress: 0.81, cruiseSpeed: 284, delayMin: 14, platform: '10',
+                rollingStock: 'Talgo Serie 112 Alta Capacidad'
+            },
+
+            // Corredor Levante y Mediterráneo
+            {
+                id: 'AVE-05120', number: '05120', operator: 'AVE', corridor: 'LEVANTE',
+                route: ['MAD_CHA', 'CUE_FZO', 'REQ_UTI', 'VAL_JSO'],
+                progress: 0.63, cruiseSpeed: 298, delayMin: 0, platform: '14',
+                rollingStock: 'Talgo 350 (Serie 112)'
+            },
+            {
+                id: 'OUIGO-09415', number: '09415', operator: 'OUIGO', corridor: 'LEVANTE',
+                route: ['VAL_JSO', 'CUE_FZO', 'MAD_CHA'],
+                progress: 0.47, cruiseSpeed: 297, delayMin: 0, platform: '15',
+                rollingStock: 'Alstom TGV Euroduplex (1018 plazas)'
+            },
+            {
+                id: 'IRYO-06312', number: '06312', operator: 'IRYO', corridor: 'LEVANTE',
+                route: ['MAD_CHA', 'CUE_FZO', 'ALB_LOS', 'VIL_AVE', 'ALI_TER'],
+                progress: 0.68, cruiseSpeed: 292, delayMin: 5, platform: '12',
+                rollingStock: 'Frecciarossa 1000 (Serie 109)'
+            },
+            {
+                id: 'AVLO-05814', number: '05814', operator: 'AVLO', corridor: 'LEVANTE',
+                route: ['ALI_TER', 'VIL_AVE', 'ALB_LOS', 'CUE_FZO', 'MAD_CHA'],
+                progress: 0.31, cruiseSpeed: 290, delayMin: 0, platform: '13',
+                rollingStock: 'Talgo Avril (Serie 106)'
+            },
+            {
+                id: 'EUROMED-01142', number: '01142', operator: 'ALVIA', corridor: 'LEVANTE',
+                route: ['BCN_SAN', 'TAR_CAM', 'CAS_PLA', 'VAL_JSO', 'ALI_TER'],
+                progress: 0.45, cruiseSpeed: 220, delayMin: 0, platform: '1',
+                rollingStock: 'Talgo 250 Euromed (Serie 130)'
+            },
+
+            // Corredor Norte / Noroeste
+            {
+                id: 'AVE-04155', number: '04155', operator: 'AVE', corridor: 'NORTE',
+                route: ['MAD_CHA', 'SEG_GUI', 'VAL_CGR', 'ZAM_AVE', 'OUR_AVE'],
+                progress: 0.58, cruiseSpeed: 294, delayMin: 0, platform: '18',
+                rollingStock: 'Talgo Avril (Serie 106)'
+            },
+            {
+                id: 'ALVIA-04280', number: '04280', operator: 'ALVIA', corridor: 'NORTE',
+                route: ['OUR_AVE', 'ZAM_AVE', 'VAL_CGR', 'SEG_GUI', 'MAD_CHA'],
+                progress: 0.33, cruiseSpeed: 248, delayMin: 6, platform: '17',
+                rollingStock: 'Talgo 250 Dual (Serie 730)'
+            },
+            {
+                id: 'AVE-04092', number: '04092', operator: 'AVE', corridor: 'NORTE',
+                route: ['LEO_AVE', 'PAL_AVE', 'VAL_CGR', 'SEG_GUI', 'MAD_CHA'],
+                progress: 0.66, cruiseSpeed: 286, delayMin: 0, platform: '19',
+                rollingStock: 'Talgo 350 (Serie 112)'
+            },
+            {
+                id: 'AVE-04310', number: '04310', operator: 'AVE', corridor: 'NORTE',
+                route: ['MAD_CHA', 'SEG_GUI', 'VAL_CGR', 'PAL_AVE', 'BUR_ROS'],
+                progress: 0.74, cruiseSpeed: 289, delayMin: 0, platform: '20',
+                rollingStock: 'Talgo 350 (Serie 112)'
+            }
+        ];
+
+        // Variables de Estado
+        let map;
+        let trainMarkers = {};
+        let liveGtfsMarkersLayer = null;
+        let selectedTrainId = 'AVE-03102';
+        let followSelectedTrain = false;
+        let currentOperatorFilter = 'ALL';
+        let currentCorridorFilter = 'ALL';
+        let currentSearchQuery = '';
+        let currentSidebarTab = 'trains';
+        let currentBoardType = 'SALIDAS';
+        let dataSourceMode = 'sim';
+
+        /*************************************************************************
+         * 5. INICIALIZACIÓN DEL MAPA INTERACTIVO LEAFLET
+         *************************************************************************/
+        function initMap() {
+            map = L.map('map', {
+                center: [40.25, -3.55],
+                zoom: 6,
+                minZoom: 5,
+                maxZoom: 15,
+                zoomControl: false
+            });
+
+            L.control.zoom({ position: 'topleft' }).addTo(map);
+
+            // Basemap CartoDB Dark Matter (sin API key requerida)
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; OpenStreetMap &copy; CARTO | Datos Adif / Renfe GTFS-RT',
+                subdomains: 'abcd',
+                maxZoom: 19
+            }).addTo(map);
+
+            liveGtfsMarkersLayer = L.layerGroup().addTo(map);
+
+            renderCorridorsAndStations();
+            updateAllTrainsPositions(0);
+            renderTelemetryInspector();
+            renderSidebarTrains();
+            renderStationBoard();
+        }
+
+        function renderCorridorsAndStations() {
+            // Trazado luminoso de corredores LAV
+            CORRIDORS.forEach(corridor => {
+                const latlngs = corridor.stations.map(stId => STATIONS[stId].coords);
+                
+                // Halo luminoso exterior
+                L.polyline(latlngs, {
+                    color: corridor.color,
+                    weight: 7,
+                    opacity: 0.20,
+                    lineCap: 'round',
+                    lineJoin: 'round'
+                }).addTo(map);
+
+                // Trazado central
+                L.polyline(latlngs, {
+                    color: corridor.color,
+                    weight: 2.5,
+                    opacity: 0.88,
+                    dashArray: '8, 4'
+                }).bindTooltip(corridor.name, { sticky: true }).addTo(map);
+            });
+
+            // Marcadores de estaciones de Alta Velocidad
+            Object.values(STATIONS).forEach(st => {
+                const isMajor = st.major;
+                const iconHtml = `
+                    <div class="relative flex items-center justify-center group cursor-pointer">
+                        <div class="${isMajor ? 'w-3.5 h-3.5 bg-slate-950 border-2 border-white shadow-[0_0_10px_rgba(255,255,255,0.85)]' : 'w-2.5 h-2.5 bg-slate-900 border border-slate-400'} rounded-full transition-transform group-hover:scale-125"></div>
+                        <span class="absolute left-4 whitespace-nowrap px-1.5 py-0.5 rounded bg-slate-950/90 border border-slate-800 text-[10px] font-semibold ${isMajor ? 'text-white' : 'text-slate-400 hidden group-hover:inline-block'} pointer-events-none shadow">
+                            ${st.short}
+                        </span>
+                    </div>
+                `;
+
+                const marker = L.marker(st.coords, {
+                    icon: L.divIcon({
+                        className: 'custom-station-icon',
+                        html: iconHtml,
+                        iconSize: [14, 14],
+                        iconAnchor: [7, 7]
+                    })
+                }).addTo(map);
+
+                marker.on('click', () => {
+                    const select = document.getElementById('station-board-select');
+                    if ([...select.options].some(o => o.value === st.id)) {
+                        select.value = st.id;
+                        switchSidebarTab('station');
+                        renderStationBoard();
+                    }
+                });
+            });
+        }
+
+        function resetMapView() {
+            followSelectedTrain = false;
+            map.flyTo([40.25, -3.55], 6, { duration: 0.8 });
+        }
+
+        /*************************************************************************
+         * 6. INTERPOLACIÓN CINEMÁTICA DE TRENES A 300 KM/H
+         *************************************************************************/
+        function getInterpolatedTrainTelemetry(train) {
+            const routeIds = train.route;
+            const totalSegments = routeIds.length - 1;
+            const scaledProgress = train.progress * totalSegments;
+            const segIdx = Math.min(Math.floor(scaledProgress), totalSegments - 1);
+            const segFraction = scaledProgress - segIdx;
+
+            const fromSt = STATIONS[routeIds[segIdx]];
+            const toSt = STATIONS[routeIds[segIdx + 1]];
+
+            const lat = fromSt.coords[0] + (toSt.coords[0] - fromSt.coords[0]) * segFraction;
+            const lng = fromSt.coords[1] + (toSt.coords[1] - fromSt.coords[1]) * segFraction;
+
+            const dy = toSt.coords[0] - fromSt.coords[0];
+            const dx = toSt.coords[1] - fromSt.coords[1];
+            const bearing = (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360;
+
+            // Curva de aceleración/frenado en proximidad de estación
+            const distFromStation = Math.min(segFraction, 1 - segFraction);
+            let currentSpeed = train.cruiseSpeed;
+            if (distFromStation < 0.08) {
+                currentSpeed = Math.round(80 + (train.cruiseSpeed - 80) * (distFromStation / 0.08));
+            } else {
+                currentSpeed = train.cruiseSpeed + Math.round(Math.sin(Date.now() / 1400 + segIdx) * 2);
+            }
+
+            const remainingSegMinutes = Math.max(2, Math.round((1 - segFraction) * 35));
+            const etaDate = new Date(Date.now() + remainingSegMinutes * 60000);
+            const etaStr = etaDate.toTimeString().slice(0, 5);
+
+            return {
+                lat,
+                lng,
+                bearing,
+                currentSpeed,
+                originStation: STATIONS[routeIds[0]],
+                destStation: STATIONS[routeIds[routeIds.length - 1]],
+                prevStation: fromSt,
+                nextStation: toSt,
+                currentSegmentIndex: segIdx,
+                etaNextStop: etaStr
+            };
+        }
+
+        function trainMatchesFilters(train) {
+            if (currentOperatorFilter !== 'ALL' && train.operator !== currentOperatorFilter) return false;
+            if (currentCorridorFilter !== 'ALL' && train.corridor !== currentCorridorFilter) return false;
+            if (currentSearchQuery.trim() !== '') {
+                const q = currentSearchQuery.toLowerCase();
+                const routeNames = train.route.map(id => STATIONS[id].name.toLowerCase()).join(' ');
+                const matchNumber = train.number.toLowerCase().includes(q) || train.id.toLowerCase().includes(q);
+                const matchStation = routeNames.includes(q);
+                if (!matchNumber && !matchStation) return false;
+            }
+            return true;
+        }
+
+        function updateAllTrainsPositions(deltaProgress = 0.0014) {
+            let speedSum = 0;
+
+            TRAINS_DATA.forEach(train => {
+                train.progress += deltaProgress * (train.cruiseSpeed / 300);
+                if (train.progress >= 0.995) {
+                    train.route = [...train.route].reverse();
+                    train.progress = 0.02;
+                }
+
+                const telemetry = getInterpolatedTrainTelemetry(train);
+                train.telemetry = telemetry;
+                speedSum += telemetry.currentSpeed;
+
+                const visible = trainMatchesFilters(train);
+                const opConfig = OPERATORS[train.operator] || OPERATORS.AVE;
+                const isSelected = selectedTrainId === train.id;
+
+                const markerHtml = `
+                    <div class="train-marker-container relative flex items-center justify-center" style="width:38px;height:38px;">
+                        ${isSelected ? `<div class="train-pulse absolute inset-0 rounded-full" style="background:${opConfig.hex}"></div>` : ''}
+                        <div class="relative z-10 flex items-center justify-center w-7 h-7 rounded-full border-2 ${isSelected ? 'border-white scale-125' : 'border-slate-950'} shadow-lg transition-transform"
+                             style="background:${opConfig.hex}; box-shadow: 0 0 12px ${opConfig.hex}99;">
+                            <i class="fa-solid fa-location-arrow text-[11px] text-slate-950" style="transform: rotate(${telemetry.bearing - 45}deg);"></i>
+                        </div>
+                        <div class="absolute -top-5 px-1.5 py-0.2 rounded bg-slate-950/95 border border-slate-700 text-[9px] font-mono font-bold text-white whitespace-nowrap shadow">
+                            ${opConfig.short} ${train.number}
+                        </div>
+                    </div>
+                `;
+
+                if (!trainMarkers[train.id]) {
+                    const marker = L.marker([telemetry.lat, telemetry.lng], {
+                        icon: L.divIcon({
+                            className: 'custom-train-marker',
+                            html: markerHtml,
+                            iconSize: [38, 38],
+                            iconAnchor: [19, 19]
+                        })
+                    });
+                    marker.on('click', () => selectTrain(train.id, true));
+                    trainMarkers[train.id] = marker;
+                } else {
+                    trainMarkers[train.id].setLatLng([telemetry.lat, telemetry.lng]);
+                    trainMarkers[train.id].setIcon(L.divIcon({
+                        className: 'custom-train-marker',
+                        html: markerHtml,
+                        iconSize: [38, 38],
+                        iconAnchor: [19, 19]
+                    }));
+                }
+
+                if (visible) {
+                    if (!map.hasLayer(trainMarkers[train.id])) {
+                        trainMarkers[train.id].addTo(map);
+                    }
+                } else {
+                    if (map.hasLayer(trainMarkers[train.id])) {
+                        map.removeLayer(trainMarkers[train.id]);
+                    }
+                }
+            });
+
+            // Si el usuario activó el seguimiento de cámara en vivo sobre el tren seleccionado
+            if (followSelectedTrain && selectedTrainId) {
+                const activeTrain = TRAINS_DATA.find(t => t.id === selectedTrainId);
+                if (activeTrain && activeTrain.telemetry) {
+                    map.panTo([activeTrain.telemetry.lat, activeTrain.telemetry.lng], { animate: true, duration: 0.5 });
+                }
+            }
+
+            // Actualizar KPIs de cabecera
+            const visibleCount = TRAINS_DATA.filter(trainMatchesFilters).length;
+            document.getElementById('kpi-active-trains').textContent = `${visibleCount} trenes`;
+            document.getElementById('badge-train-count').textContent = visibleCount;
+
+            const avgSpeed = Math.round(speedSum / TRAINS_DATA.length);
+            document.getElementById('kpi-avg-speed').textContent = `${avgSpeed} km/h`;
+
+            const onTimeCount = TRAINS_DATA.filter(t => t.delayMin <= 5).length;
+            const punctualityPct = ((onTimeCount / TRAINS_DATA.length) * 100).toFixed(1);
+            document.getElementById('kpi-punctuality').textContent = `${punctualityPct}%`;
+
+            if (selectedTrainId) {
+                renderTelemetryInspector();
+            }
+        }
+
+        /*************************************************************************
+         * 7. CONEXIÓN EN VIVO CON EL FEED GTFS-RT DE RENFE DATA
+         *************************************************************************/
+        async function fetchLiveRenfeGtfsRt() {
+            const banner = document.getElementById('gtfs-status-banner');
+            const badgeText = document.getElementById('feed-badge-text');
+            banner.innerHTML = `<span class="text-cyan-400"><i class="fa-solid fa-circle-notch fa-spin mr-1"></i> Consultando gtfsrt.renfe.com/vehicle_positions.json...</span>`;
+
+            const targetUrl = 'https://gtfsrt.renfe.com/vehicle_positions.json';
+            const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+                const response = await fetch(proxyUrl, { signal: controller.signal });
+                clearTimeout(timeoutId);
+
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                const data = await response.json();
+
+                const entities = data?.entity || [];
+                liveGtfsMarkersLayer.clearLayers();
+                let lavPointsPlotted = 0;
+
+                entities.forEach(item => {
+                    const v = item.vehicle;
+                    if (!v || !v.position) return;
+                    const lat = v.position.latitude;
+                    const lng = v.position.longitude;
+                    const label = (v.vehicle?.label || v.trip?.tripId || 'RENFE').toUpperCase();
+
+                    // Filtrar trenes de Larga Distancia / Alta Velocidad o pintar telemetría GPS recibida
+                    if (lat && lng && lavPointsPlotted < 40) {
+                        lavPointsPlotted++;
+                        const gpsMarker = L.circleMarker([lat, lng], {
+                            radius: 5,
+                            color: '#22d3ee',
+                            fillColor: '#06b6d4',
+                            fillOpacity: 0.9,
+                            weight: 2
+                        }).bindTooltip(`GPS Renfe GTFS-RT: ${label}`, { direction: 'top' });
+                        liveGtfsMarkersLayer.addLayer(gpsMarker);
+                    }
+                });
+
+                badgeText.textContent = `GTFS-RT LIVE (${entities.length} GPS)`;
+                banner.innerHTML = `<span>GTFS-RT Renfe: <strong class="text-cyan-400">${entities.length} posiciones GPS recibidas</strong></span>`;
+            } catch (error) {
+                badgeText.textContent = 'HÍBRIDO 300 KM/H';
+                banner.innerHTML = `<span>Proxy público saturado · <strong class="text-emerald-400">Interpolación LAV activa</strong></span>`;
+            }
+        }
+
+        function setDataSourceMode(mode) {
+            dataSourceMode = mode;
+            const btnSim = document.getElementById('btn-mode-sim');
+            const btnGtfs = document.getElementById('btn-mode-gtfs');
+
+            if (mode === 'gtfs') {
+                btnGtfs.className = 'px-2.5 py-1.5 rounded-lg font-semibold transition-all bg-cyan-600 text-white shadow flex items-center gap-1.5';
+                btnSim.className = 'px-2.5 py-1.5 rounded-lg font-semibold transition-all text-slate-400 hover:text-white flex items-center gap-1.5';
+                fetchLiveRenfeGtfsRt();
+            } else {
+                btnSim.className = 'px-2.5 py-1.5 rounded-lg font-semibold transition-all bg-emerald-600 text-white shadow flex items-center gap-1.5';
+                btnGtfs.className = 'px-2.5 py-1.5 rounded-lg font-semibold transition-all text-slate-400 hover:text-white flex items-center gap-1.5';
+                liveGtfsMarkersLayer.clearLayers();
+                document.getElementById('feed-badge-text').textContent = 'EN VIVO 300 KM/H';
+                document.getElementById('gtfs-status-banner').innerHTML = `<span>Motor: <strong class="text-emerald-400">Cinemático Híbrido Activo</strong></span>`;
+            }
+        }
+
+        /*************************************************************************
+         * 8. INSPECTOR DE TELEMETRÍA Y LISTA DE TRENES EN EL PANEL DERECHO
+         *************************************************************************/
+        function renderTelemetryInspector() {
+            const panel = document.getElementById('telemetry-inspector-panel');
+            const train = TRAINS_DATA.find(t => t.id === selectedTrainId);
+
+            if (!train || !train.telemetry) {
+                panel.classList.add('hidden');
+                return;
+            }
+
+            panel.classList.remove('hidden');
+            const t = train.telemetry;
+            const op = OPERATORS[train.operator] || OPERATORS.AVE;
+
+            const stopsHtml = train.route.map((stId, idx) => {
+                const st = STATIONS[stId];
+                const isPassed = idx <= t.currentSegmentIndex;
+                const isNext = idx === t.currentSegmentIndex + 1;
+                return `
+                    <div class="flex items-center gap-2 text-[11px]">
+                        <span class="w-2 h-2 rounded-full shrink-0 ${isPassed ? 'bg-emerald-400' : isNext ? 'bg-amber-400 animate-ping' : 'bg-slate-700'}"></span>
+                        <span class="${isPassed ? 'text-slate-500 line-through' : isNext ? 'text-white font-semibold' : 'text-slate-400'} truncate flex-1">${st.short}</span>
+                        <span class="font-mono text-[10px] ${isNext ? 'text-amber-300 font-bold' : 'text-slate-500'}">
+                            ${idx === 0 ? 'Origen' : isNext ? `ETA ${t.etaNextStop}` : isPassed ? 'Paso OK' : 'Prog.'}
+                        </span>
+                    </div>
+                `;
+            }).join('');
+
+            panel.innerHTML = `
+                <div class="p-3.5" style="background: linear-gradient(135deg, ${op.hex}1f, transparent)">
+                    <div class="flex items-center justify-between gap-2 mb-2">
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <span class="px-2 py-0.5 rounded text-xs font-bold border ${op.badgeClass}">${op.label}</span>
+                                <span class="font-mono font-bold text-white text-sm">#${train.number}</span>
+                            </div>
+                            <div class="text-[11px] text-slate-400 mt-0.5"><i class="fa-solid fa-Microchip mr-1"></i>${train.rollingStock}</div>
+                        </div>
+                        <div class="flex items-center gap-1.5">
+                            <button onclick="toggleFollowTrain()" class="px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all ${followSelectedTrain ? 'bg-emerald-600 text-white border-emerald-400' : 'bg-slate-800 text-slate-300 border-slate-700 hover:text-white'}">
+                                <i class="fa-solid fa-crosshairs mr-1"></i>${followSelectedTrain ? 'Siguiendo' : 'Seguir'}
+                            </button>
+                            <button onclick="clearSelectedTrain()" class="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center">
+                                <i class="fa-solid fa-xmark text-xs"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Indicadores Velocímetro, Estado y Vía -->
+                    <div class="grid grid-cols-3 gap-2 bg-slate-900/90 p-2 rounded-xl border border-slate-800 text-center mb-2.5">
+                        <div>
+                            <div class="text-[10px] uppercase text-slate-400">Velocidad</div>
+                            <div class="font-mono font-bold text-sm text-emerald-400">${t.currentSpeed} km/h</div>
+                        </div>
+                        <div class="border-x border-slate-800">
+                            <div class="text-[10px] uppercase text-slate-400">Estado</div>
+                            <div class="font-mono font-bold text-sm ${train.delayMin === 0 ? 'text-emerald-400' : 'text-amber-400'}">
+                                ${train.delayMin === 0 ? 'En hora' : `+${train.delayMin} min`}
+                            </div>
+                        </div>
+                        <div>
+                            <div class="text-[10px] uppercase text-slate-400">Vía Asig.</div>
+                            <div class="font-mono font-bold text-sm text-amber-300">Vía ${train.platform}</div>
+                        </div>
+                    </div>
+
+                    <!-- Cronología de paradas -->
+                    <div class="bg-slate-900/60 rounded-xl p-2.5 border border-slate-800/80">
+                        <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5 flex justify-between">
+                            <span>Termómetro de Ruta</span>
+                            <span class="font-mono text-slate-400">${t.lat.toFixed(3)}°N, ${t.lng.toFixed(3)}°E</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-x-4 gap-y-1 max-h-24 overflow-y-auto pr-1">
+                            ${stopsHtml}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderSidebarTrains() {
+            const container = document.getElementById('trains-list-container');
+            const filtered = TRAINS_DATA.filter(trainMatchesFilters);
+
+            if (filtered.length === 0) {
+                container.innerHTML = `
+                    <div class="p-8 text-center text-slate-400">
+                        <i class="fa-solid fa-train-tram text-3xl mb-2 text-slate-600"></i>
+                        <p class="text-xs font-semibold">No se encontraron trenes con ese filtro</p>
+                        <button onclick="setOperatorFilter('ALL'); setCorridorFilter('ALL');" class="mt-3 px-3 py-1.5 rounded-lg bg-slate-800 text-emerald-400 text-xs">Ver todos los trenes</button>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = filtered.map(train => {
+                const t = train.telemetry;
+                const op = OPERATORS[train.operator] || OPERATORS.AVE;
+                const isSelected = selectedTrainId === train.id;
+
+                let delayBadge = `<span class="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono text-[10px]">EN HORA</span>`;
+                if (train.delayMin > 0 && train.delayMin < 10) {
+                    delayBadge = `<span class="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 font-mono text-[10px]">+${train.delayMin} min</span>`;
+                } else if (train.delayMin >= 10) {
+                    delayBadge = `<span class="px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 font-mono text-[10px]">+${train.delayMin} min</span>`;
+                }
+
+                const pct = Math.round(train.progress * 100);
+
+                return `
+                    <div onclick="selectTrain('${train.id}', true)"
+                         class="p-3 rounded-xl border transition-all cursor-pointer ${isSelected ? 'bg-slate-800/95 border-emerald-400 shadow-lg' : 'bg-slate-950/75 border-slate-800/90 hover:border-slate-700'}">
+                        <div class="flex items-center justify-between gap-2 mb-1.5">
+                            <div class="flex items-center gap-2 min-w-0">
+                                <span class="px-2 py-0.5 rounded-md text-[11px] font-bold border shrink-0 ${op.badgeClass}">
+                                    ${op.short} ${train.number}
+                                </span>
+                                <span class="text-xs font-semibold text-white truncate">
+                                    ${t.originStation.short} <i class="fa-solid fa-arrow-right text-[10px] text-slate-500 mx-1"></i> ${t.destStation.short}
+                                </span>
+                            </div>
+                            ${delayBadge}
+                        </div>
+
+                        <div class="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden mb-2">
+                            <div class="h-full rounded-full transition-all duration-300" style="width:${pct}%; background:${op.hex}"></div>
+                        </div>
+
+                        <div class="flex items-center justify-between text-[11px] text-slate-400">
+                            <span class="truncate"><i class="fa-solid fa-location-dot text-cyan-400 mr-1"></i>Próx: <strong class="text-slate-200">${t.nextStation.short}</strong> (${t.etaNextStop})</span>
+                            <span class="font-mono text-slate-200 font-semibold shrink-0"><i class="fa-solid fa-gauge-high text-emerald-400 mr-1"></i>${t.currentSpeed} km/h</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function selectTrain(trainId, flyToTrain = false) {
+            selectedTrainId = trainId;
+            const train = TRAINS_DATA.find(t => t.id === trainId);
+            if (!train) return;
+
+            if (flyToTrain && train.telemetry) {
+                map.flyTo([train.telemetry.lat, train.telemetry.lng], 8, { duration: 0.65 });
+            }
+
+            switchSidebarTab('trains');
+            renderTelemetryInspector();
+            renderSidebarTrains();
+            updateAllTrainsPositions(0);
+        }
+
+        function toggleFollowTrain() {
+            followSelectedTrain = !followSelectedTrain;
+            renderTelemetryInspector();
+        }
+
+        function clearSelectedTrain() {
+            selectedTrainId = null;
+            followSelectedTrain = false;
+            renderTelemetryInspector();
+            renderSidebarTrains();
+            updateAllTrainsPositions(0);
+        }
+
+        /*************************************************************************
+         * 9. TELEINDICADOR DIGITAL ADIF DE SALIDAS Y LLEGADAS
+         *************************************************************************/
+        function setBoardType(type) {
+            currentBoardType = type;
+            const btnDep = document.getElementById('btn-board-departures');
+            const btnArr = document.getElementById('btn-board-arrivals');
+            const colDest = document.getElementById('board-col-dest');
+
+            if (type === 'SALIDAS') {
+                btnDep.className = 'px-2.5 py-1 rounded-md bg-amber-500 text-slate-950 font-bold';
+                btnArr.className = 'px-2.5 py-1 rounded-md text-slate-400 hover:text-white font-medium';
+                colDest.textContent = 'Destino';
+            } else {
+                btnArr.className = 'px-2.5 py-1 rounded-md bg-amber-500 text-slate-950 font-bold';
+                btnDep.className = 'px-2.5 py-1 rounded-md text-slate-400 hover:text-white font-medium';
+                colDest.textContent = 'Procedencia';
+            }
+            renderStationBoard();
+        }
+
+        function renderStationBoard() {
+            const stationId = document.getElementById('station-board-select').value;
+            const container = document.getElementById('adif-board-rows');
+            const now = new Date();
+
+            const stationTrains = TRAINS_DATA.filter(t => t.route.includes(stationId));
+
+            const rowsHtml = stationTrains.map((train, idx) => {
+                const t = train.telemetry;
+                const op = OPERATORS[train.operator] || OPERATORS.AVE;
+                const schedDate = new Date(now.getTime() + (idx * 12 + 5) * 60000);
+                const timeStr = schedDate.toTimeString().slice(0, 5);
+
+                const targetName = currentBoardType === 'SALIDAS'
+                    ? (t.destStation.id === stationId ? t.originStation.short : t.destStation.short)
+                    : (t.originStation.id === stationId ? t.destStation.short : t.originStation.short);
+
+                const statusHtml = train.delayMin === 0
+                    ? `<span class="text-emerald-400 adif-led-green">EN HORA</span>`
+                    : `<span class="text-amber-400 adif-led-amber">+${train.delayMin} MIN</span>`;
+
+                return `
+                    <div onclick="selectTrain('${train.id}', true)" class="grid grid-cols-12 items-center px-3 py-2.5 hover:bg-slate-900/90 cursor-pointer transition-colors">
+                        <div class="col-span-2 font-bold text-amber-300 adif-led-amber">${timeStr}</div>
+                        <div class="col-span-4 font-bold text-white uppercase truncate pr-2">${targetName}</div>
+                        <div class="col-span-3 flex items-center gap-1.5">
+                            <span class="px-1.5 py-0.2 rounded text-[10px] font-bold border ${op.badgeClass}">${op.short}</span>
+                            <span class="text-slate-300 text-[11px]">${train.number}</span>
+                        </div>
+                        <div class="col-span-1 text-center">
+                            <span class="inline-block w-6 py-0.5 rounded bg-slate-900 border border-amber-500/40 text-amber-300 font-bold text-[11px]">${train.platform}</span>
+                        </div>
+                        <div class="col-span-2 text-right text-[10px] font-bold">${statusHtml}</div>
+                    </div>
+                `;
+            }).join('');
+
+            container.innerHTML = rowsHtml || `<div class="p-6 text-center text-slate-500">Sin circulaciones inmediatas</div>`;
+        }
+
+        /*************************************************************************
+         * 10. CONTROLES DE FILTRADO, PESTAÑAS Y UTILIDADES
+         *************************************************************************/
+        function setOperatorFilter(op) {
+            currentOperatorFilter = op;
+            document.querySelectorAll('.op-filter-btn').forEach(btn => {
+                if (btn.dataset.op === op) {
+                    btn.classList.add('ring-2', 'ring-white');
+                } else {
+                    btn.classList.remove('ring-2', 'ring-white');
+                }
+            });
+            updateAllTrainsPositions(0);
+            renderSidebarTrains();
+        }
+
+        function setCorridorFilter(corridor) {
+            currentCorridorFilter = corridor;
+            updateAllTrainsPositions(0);
+            renderSidebarTrains();
+        }
+
+        function handleSearch(query) {
+            currentSearchQuery = query;
+            updateAllTrainsPositions(0);
+            renderSidebarTrains();
+        }
+
+        function switchSidebarTab(tab) {
+            currentSidebarTab = tab;
+            const viewTrains = document.getElementById('sidebar-view-trains');
+            const viewStation = document.getElementById('sidebar-view-station');
+            const btnTrains = document.getElementById('tab-btn-trains');
+            const btnStation = document.getElementById('tab-btn-station');
+
+            if (tab === 'trains') {
+                viewTrains.classList.remove('hidden');
+                viewStation.classList.add('hidden');
+                btnTrains.className = 'py-2 px-3 rounded-xl text-xs font-bold tracking-wide transition-all bg-slate-800 text-white shadow flex items-center justify-center gap-2';
+                btnStation.className = 'py-2 px-3 rounded-xl text-xs font-bold tracking-wide transition-all text-slate-400 hover:text-white flex items-center justify-center gap-2';
+            } else {
+                viewTrains.classList.add('hidden');
+                viewStation.classList.remove('hidden');
+                btnStation.className = 'py-2 px-3 rounded-xl text-xs font-bold tracking-wide transition-all bg-slate-800 text-white shadow flex items-center justify-center gap-2';
+                btnTrains.className = 'py-2 px-3 rounded-xl text-xs font-bold tracking-wide transition-all text-slate-400 hover:text-white flex items-center justify-center gap-2';
+                renderStationBoard();
+            }
+        }
+
+        function toggleModal(modalId, show) {
+            const modal = document.getElementById(modalId);
+            if (show) modal.classList.remove('hidden');
+            else modal.classList.add('hidden');
+        }
+
+        function copyCodeBlock(preId, btnId) {
+            const code = document.getElementById(preId).innerText;
+            const temp = document.createElement('textarea');
+            temp.value = code;
+            document.body.appendChild(temp);
+            temp.select();
+            document.execCommand('copy');
+            document.body.removeChild(temp);
+
+            const btn = document.getElementById(btnId);
+            const originalHtml = btn.innerHTML;
+            btn.innerHTML = `<i class="fa-solid fa-check mr-1"></i> ¡Copiado!`;
+            setTimeout(() => {
+                btn.innerHTML = originalHtml;
+            }, 2000);
+        }
+
+        function updateClock() {
+            const now = new Date();
+            document.getElementById('header-clock').textContent = now.toTimeString().slice(0, 8);
+        }
+
+        window.onload = function () {
+            initMap();
+            updateClock();
+            setInterval(updateClock, 1000);
+
+            // Bucle de movimiento fluido de alta velocidad
+            setInterval(() => {
+                updateAllTrainsPositions(0.0015);
+                if (currentSidebarTab === 'trains') {
+                    renderSidebarTrains();
+                }
+            }, 1100);
+        };
+    </script>
+</body>
+</html>
