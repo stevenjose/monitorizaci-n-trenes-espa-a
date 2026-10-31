@@ -224,7 +224,7 @@
 
             <div class="relative flex-1 sm:w-60">
                 <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
-                <input id="search-input" type="text" oninput="handleSearch(this.value)" placeholder="Buscar tren (03102) o estación..." class="w-full bg-slate-950 border border-slate-700 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500">
+                <input id="search-input" type="search" oninput="handleSearch(this.value)" aria-label="Buscar tren por número, operador, estación o material rodante" placeholder="Tren, operador, estación o material..." class="w-full bg-slate-950 border border-slate-700 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500">
             </div>
         </div>
     </div>
@@ -875,19 +875,41 @@ jobs:
             };
         }
 
+        function normalizeSearchText(value) {
+            return String(value ?? '')
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .toLocaleLowerCase('es')
+                .replace(/[^a-z0-9]+/g, ' ')
+                .trim();
+        }
+
         function trainMatchesFilters(train) {
             if (currentOperatorFilter !== 'ALL' && train.operator !== currentOperatorFilter) return false;
             if (currentCorridorFilter !== 'ALL' && train.corridor !== currentCorridorFilter) return false;
-            if (currentSearchQuery.trim() !== '') {
-                const q = currentSearchQuery.toLowerCase();
-                const routeNames = train.route.map(id => STATIONS[id].name.toLowerCase()).join(' ');
-                const matchNumber = train.number.toLowerCase().includes(q) || train.id.toLowerCase().includes(q);
-                const matchStation = routeNames.includes(q);
-                if (!matchNumber && !matchStation) return false;
+
+            const queryTokens = normalizeSearchText(currentSearchQuery).split(/\s+/).filter(Boolean);
+            if (queryTokens.length > 0) {
+                const operator = OPERATORS[train.operator] || {};
+                const searchableValues = [
+                    train.number,
+                    train.id,
+                    train.operator,
+                    operator.label,
+                    operator.short,
+                    train.rollingStock,
+                    train.corridor,
+                    ...train.route.flatMap(id => {
+                        const station = STATIONS[id];
+                        return station ? [station.id, station.name, station.short] : [];
+                    })
+                ];
+                const searchableText = normalizeSearchText(searchableValues.filter(Boolean).join(' '));
+                if (!queryTokens.every(token => searchableText.includes(token))) return false;
             }
+
             return true;
         }
-
         function updateAllTrainsPositions(deltaProgress = 0.0014) {
             let speedSum = 0;
 
@@ -1140,7 +1162,7 @@ jobs:
                     <div class="p-8 text-center text-slate-400">
                         <i class="fa-solid fa-train-tram text-3xl mb-2 text-slate-600"></i>
                         <p class="text-xs font-semibold">No se encontraron trenes con ese filtro</p>
-                        <button onclick="setOperatorFilter('ALL'); setCorridorFilter('ALL');" class="mt-3 px-3 py-1.5 rounded-lg bg-slate-800 text-emerald-400 text-xs">Ver todos los trenes</button>
+                        <button onclick="resetTrainFilters()" class="mt-3 px-3 py-1.5 rounded-lg bg-slate-800 text-emerald-400 text-xs">Limpiar búsqueda y filtros</button>
                     </div>
                 `;
                 return;
@@ -1305,6 +1327,21 @@ jobs:
             renderSidebarTrains();
         }
 
+        function resetTrainFilters() {
+            currentOperatorFilter = 'ALL';
+            currentCorridorFilter = 'ALL';
+            currentSearchQuery = '';
+
+            document.getElementById('search-input').value = '';
+            document.getElementById('corridor-select').value = 'ALL';
+            document.querySelectorAll('.op-filter-btn').forEach(btn => {
+                btn.classList.toggle('ring-2', btn.dataset.op === 'ALL');
+                btn.classList.toggle('ring-white', btn.dataset.op === 'ALL');
+            });
+
+            updateAllTrainsPositions(0);
+            renderSidebarTrains();
+        }
         function switchSidebarTab(tab) {
             currentSidebarTab = tab;
             const viewTrains = document.getElementById('sidebar-view-trains');
