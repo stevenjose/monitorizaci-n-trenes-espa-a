@@ -48,9 +48,33 @@
 
     <style>
         body {
-            background-color: #060913;
+            background:
+                radial-gradient(ellipse at 12% 8%, rgba(6, 182, 212, 0.12), transparent 30%),
+                radial-gradient(ellipse at 88% 24%, rgba(16, 185, 129, 0.09), transparent 28%),
+                radial-gradient(ellipse at 50% 100%, rgba(79, 70, 229, 0.08), transparent 38%),
+                linear-gradient(145deg, #060913 0%, #0a1020 48%, #070b16 100%);
+            background-attachment: fixed;
             color: #e2e8f0;
             overflow-x: hidden;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            pointer-events: none;
+            opacity: 0.12;
+            background-image:
+                linear-gradient(rgba(148, 163, 184, 0.14) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(148, 163, 184, 0.14) 1px, transparent 1px);
+            background-size: 64px 64px;
+            mask-image: linear-gradient(to bottom, black, transparent 88%);
+        }
+
+        body > * {
+            position: relative;
+            z-index: 1;
         }
 
         /* Scrollbars personalizadas */
