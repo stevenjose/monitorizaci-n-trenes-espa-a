@@ -786,6 +786,20 @@ jobs:
                 attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
             }).addTo(map);
 
+            // Capa de infraestructura ferroviaria detallada basada en OpenStreetMap
+            map.createPane('railwayInfrastructurePane');
+            const railwayPane = map.getPane('railwayInfrastructurePane');
+            railwayPane.style.zIndex = 450;
+            railwayPane.style.pointerEvents = 'none';
+            const railwayInfrastructureLayer = L.tileLayer('https://tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png', {
+                pane: 'railwayInfrastructurePane',
+                maxZoom: 19,
+                attribution: '&copy; <a href="https://www.openrailwaymap.org/">OpenRailwayMap</a>, datos &copy; OpenStreetMap contributors'
+            }).addTo(map);
+            L.control.layers(null, {
+                'Infraestructura ferroviaria (OpenRailwayMap)': railwayInfrastructureLayer
+            }, { position: 'topright' }).addTo(map);
+
             liveGtfsMarkersLayer = L.layerGroup().addTo(map);
 
             renderCorridorsAndStations();
