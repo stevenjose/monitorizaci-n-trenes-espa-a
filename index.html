@@ -659,6 +659,7 @@ jobs:
             {
                 id: 'AVE-03192', number: '03192', operator: 'AVE', corridor: 'NORESTE',
                 route: ['BCN_SAN', 'MAD_ATO'],
+                trackPath: ['BCN_SAN', 'TAR_CAM', 'LLE_PIR', 'ZGZ_DEL', 'CAL_AVE', 'GUA_YEB', 'MAD_ATO'],
                 progress: 0.19, cruiseSpeed: 306, delayMin: 0, platform: '2',
                 rollingStock: 'Siemens Velaro E Directo (S-103)'
             },
@@ -874,13 +875,14 @@ jobs:
          *************************************************************************/
         function getInterpolatedTrainTelemetry(train) {
             const routeIds = train.route;
-            const totalSegments = routeIds.length - 1;
+            const trackIds = train.trackPath || routeIds;
+            const totalSegments = trackIds.length - 1;
             const scaledProgress = train.progress * totalSegments;
             const segIdx = Math.min(Math.floor(scaledProgress), totalSegments - 1);
             const segFraction = scaledProgress - segIdx;
 
-            const fromSt = STATIONS[routeIds[segIdx]];
-            const toSt = STATIONS[routeIds[segIdx + 1]];
+            const fromSt = STATIONS[trackIds[segIdx]];
+            const toSt = STATIONS[trackIds[segIdx + 1]];
 
             const lat = fromSt.coords[0] + (toSt.coords[0] - fromSt.coords[0]) * segFraction;
             const lng = fromSt.coords[1] + (toSt.coords[1] - fromSt.coords[1]) * segFraction;
@@ -889,16 +891,27 @@ jobs:
             const dx = toSt.coords[1] - fromSt.coords[1];
             const bearing = (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360;
 
-            // Curva de aceleración/frenado en proximidad de estación
-            const distFromStation = Math.min(segFraction, 1 - segFraction);
+            // Mantener las paradas del servicio separadas de los puntos de trazado
+            const scaledRouteProgress = train.progress * (routeIds.length - 1);
+            const routeSegmentIndex = Math.min(Math.floor(scaledRouteProgress), routeIds.length - 2);
+            const routeSegmentFraction = scaledRouteProgress - routeSegmentIndex;
+            const routeFromStation = STATIONS[routeIds[routeSegmentIndex]];
+            const routeToStation = STATIONS[routeIds[routeSegmentIndex + 1]];
+
+            // La velocidad simulada no frena en los puntos intermedios del trazado
             let currentSpeed = train.cruiseSpeed;
-            if (distFromStation < 0.08) {
-                currentSpeed = Math.round(80 + (train.cruiseSpeed - 80) * (distFromStation / 0.08));
+            if (train.trackPath) {
+                currentSpeed += Math.round(Math.sin(Date.now() / 1400 + segIdx) * 2);
             } else {
-                currentSpeed = train.cruiseSpeed + Math.round(Math.sin(Date.now() / 1400 + segIdx) * 2);
+                const distFromStation = Math.min(segFraction, 1 - segFraction);
+                if (distFromStation < 0.08) {
+                    currentSpeed = Math.round(80 + (train.cruiseSpeed - 80) * (distFromStation / 0.08));
+                } else {
+                    currentSpeed += Math.round(Math.sin(Date.now() / 1400 + segIdx) * 2);
+                }
             }
 
-            const remainingSegMinutes = Math.max(2, Math.round((1 - segFraction) * 35));
+            const remainingSegMinutes = Math.max(2, Math.round((1 - routeSegmentFraction) * 35));
             const etaDate = new Date(Date.now() + remainingSegMinutes * 60000);
             const etaStr = etaDate.toTimeString().slice(0, 5);
 
@@ -909,9 +922,9 @@ jobs:
                 currentSpeed,
                 originStation: STATIONS[routeIds[0]],
                 destStation: STATIONS[routeIds[routeIds.length - 1]],
-                prevStation: fromSt,
-                nextStation: toSt,
-                currentSegmentIndex: segIdx,
+                prevStation: routeFromStation,
+                nextStation: routeToStation,
+                currentSegmentIndex: routeSegmentIndex,
                 etaNextStop: etaStr
             };
         }
